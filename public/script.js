@@ -1,0 +1,637 @@
+
+const suits = ['♥', '♠', '♦', '♣'];
+const ranks = ['9', '10', 'J', 'Q', 'K', 'A'];
+
+// 48 kartlık deste (her karttan iki tane)
+function createDeck() {
+    let deck = [];
+    for (let d = 0; d < 2; d++) { // iki deste
+        for (let suit of suits) {
+            for (let rank of ranks) {
+                deck.push({ suit, rank });
+            }
+        }
+    }
+    return deck;
+}
+
+// Deste karıştırma (Fisher-Yates)
+function shuffle(deck) {
+    for (let i = deck.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        [deck[i], deck[j]] = [deck[j], deck[i]];
+    }
+    return deck;
+}
+
+// 4 oyuncuya 4'erli gruplar halinde 12'şer kart dağıt
+function dealCards(deck) {
+    const players = [[], [], [], []];
+    let cardIndex = 0;
+    for (let round = 0; round < 3; round++) { // 3 turda 4'er kart
+        for (let p = 0; p < 4; p++) {
+            for (let k = 0; k < 4; k++) {
+                players[p].push(deck[cardIndex++]);
+            }
+        }
+    }
+    return players;
+}
+
+// Kart büyüklük sırası (A > 10 > K > Q > J > 9)
+const rankOrder = ['A', '10', 'K', 'Q', 'J', '9'];
+const suitOrder = ['♥', '♠', '♦', '♣'];
+const suitClass = {
+    '♥': 'hearts',
+    '♦': 'diamonds',
+    '♠': 'spades',
+    '♣': 'clubs',
+};
+
+function sortPlayerCards(cards) {
+    // Önce suit'e göre, sonra rankOrder'a göre sırala
+    return cards.slice().sort((a, b) => {
+        const suitDiff = suitOrder.indexOf(a.suit) - suitOrder.indexOf(b.suit);
+        if (suitDiff !== 0) return suitDiff;
+        return rankOrder.indexOf(a.rank) - rankOrder.indexOf(b.rank);
+    });
+}
+
+function renderPlayers(players) {
+    for (let i = 0; i < 4; i++) {
+        const cardsDiv = document.querySelector(`#player${i+1} .cards`);
+        cardsDiv.innerHTML = '';
+        // Her suit için bir satır
+        for (const suit of suitOrder) {
+            const rowDiv = document.createElement('div');
+            rowDiv.style.marginBottom = '2px';
+            const suitCards = sortPlayerCards(players[i]).filter(card => card.suit === suit);
+            suitCards.forEach(card => {
+                const cardDiv = document.createElement('span');
+                cardDiv.className = 'card ' + suitClass[card.suit];
+                cardDiv.textContent = card.rank + card.suit;
+                rowDiv.appendChild(cardDiv);
+            });
+            cardsDiv.appendChild(rowDiv);
+        }
+    }
+}
+
+// İhale değişkenleri
+let auctionActive = false;
+let auctionPlayers = [0, 1, 2, 3]; // Oyuncu indexleri
+let auctionBids = [null, null, null, null];
+let auctionPasses = [false, false, false, false];
+let auctionCurrent = 0;
+let auctionHighestBid = 0;
+let auctionWinner = null;
+let auctionTurns = 0;
+let trumpSuit = null;
+
+function updateAuctionHighestBid() {
+    const div = document.getElementById('auction-highest-bid');
+    if (auctionHighestBid && auctionHighestBid >= 150) {
+        div.textContent = `En Yüksek Teklif: ${auctionHighestBid}`;
+    } else {
+        div.textContent = '';
+    }
+}
+
+function startAuction() {
+    auctionActive = true;
+    auctionBids = [null, null, null, null];
+    auctionPasses = [false, false, false, false];
+    auctionCurrent = 0;
+    auctionHighestBid = 150; // İhale en az 150'den başlar
+    auctionWinner = null;
+    auctionTurns = 0;
+    document.getElementById('auction-status').textContent = 'İhale başladı! (En az 150)';
+    document.getElementById('auction-controls').style.display = '';
+    updateAuctionHighestBid();
+    nextAuctionTurn();
+}
+
+function nextAuctionTurn() {
+    if (auctionTurns >= 4) {
+        // İhale bittiğinde tüm kutulardan kaldır
+        for (let i = 0; i < 4; i++) {
+            document.getElementById(`player${i+1}`).classList.remove('auction-active');
+        }
+        endAuction();
+        return;
+    }
+    // Sıradaki oyuncu
+    document.getElementById('auction-player').textContent = `Oyuncu ${auctionCurrent + 1} sırada: `;
+    document.getElementById('bid-input').value = '';
+    document.getElementById('bid-input').focus();
+    // Tüm kutulardan kaldır, sadece teklif sırası gelen oyuncuya ekle
+    for (let i = 0; i < 4; i++) {
+        const div = document.getElementById(`player${i+1}`);
+        if (i === auctionCurrent) div.classList.add('auction-active');
+        else div.classList.remove('auction-active');
+    }
+}
+
+function endAuction() {
+    auctionActive = false;
+    document.getElementById('auction-controls').style.display = 'none';
+    updateAuctionHighestBid();
+    // En yüksek teklifi veren oyuncuyu bul
+    let maxBid = -1;
+    let winner = null;
+    for (let i = 0; i < 4; i++) {
+        if (auctionBids[i] !== null && auctionBids[i] > maxBid) {
+            maxBid = auctionBids[i];
+            winner = i;
+        }
+    }
+    auctionHighestBid = maxBid;
+    auctionWinner = winner;
+    if (auctionWinner !== null) {
+        document.getElementById('auction-status').textContent = `İhaleyi Oyuncu ${auctionWinner + 1} kazandı! Teklif: ${auctionHighestBid}`;
+        //calculateAndShowScores(); // Başlangıç puanlarını gösterme
+        showTrumpSelect();
+        // Burada koz seçimi ve ilk kart atımı başlatılabilir
+    } else {
+        document.getElementById('auction-status').textContent = 'İhalede kimse teklif vermedi.';
+    }
+}
+
+function showTrumpSelect() {
+    document.getElementById('trump-select').style.display = '';
+    document.getElementById('trump-player').textContent = `Kozu seçme hakkı: Oyuncu ${auctionWinner + 1}`;
+}
+
+function hideTrumpSelect() {
+    document.getElementById('trump-select').style.display = 'none';
+}
+
+let playedCards = [];
+let currentPlayer = null; // Sırası gelen oyuncu
+let firstPlayerOfTrick = null; // Elin ilk oyuncusu
+
+function enableFirstPlay() {
+    firstPlayerOfTrick = auctionWinner;
+    currentPlayer = auctionWinner;
+    renderPlayersWithClick(currentPlayer);
+}
+
+function renderPlayersWithClick(activePlayer) {
+    // Elin başında ilk atılan kartın rengi (leadSuit) belirlenir
+    let leadSuit = playedCards.length > 0 ? playedCards[0].card.suit : null;
+    for (let i = 0; i < 4; i++) {
+        const playerDiv = document.getElementById(`player${i+1}`);
+        if (activePlayer === i) {
+            playerDiv.classList.add('active-player');
+        } else {
+            playerDiv.classList.remove('active-player');
+        }
+        const cardsDiv = playerDiv.querySelector('.cards');
+        cardsDiv.innerHTML = '';
+        // Aktif oyuncunun oynayabileceği kartları belirle
+        let allowedCards = null;
+        if (i === activePlayer && leadSuit) {
+            const hand = playersGlobal[i];
+            const hasLeadSuit = hand.some(c => c.suit === leadSuit);
+            const hasTrump = trumpSuit && hand.some(c => c.suit === trumpSuit);
+            // Eğer açılan kart koz ise, koz yükseltme zorunluluğu uygula
+            if (leadSuit === trumpSuit && hasTrump) {
+                // Masadaki en yüksek kozun sırasını bul
+                const playedTrumps = playedCards.filter(pc => pc.card.suit === trumpSuit).map(pc => pc.card);
+                let maxTrumpRankIdx = -1;
+                if (playedTrumps.length > 0) {
+                    maxTrumpRankIdx = Math.min(...playedTrumps.map(c => rankOrder.indexOf(c.rank)));
+                }
+                // Elinde daha yüksek koz var mı?
+                const higherTrumps = hand.filter(c => c.suit === trumpSuit && rankOrder.indexOf(c.rank) < maxTrumpRankIdx);
+                if (playedTrumps.length > 0 && higherTrumps.length > 0) {
+                    allowedCards = higherTrumps;
+                } else {
+                    allowedCards = hand.filter(c => c.suit === trumpSuit);
+                }
+            } else if (hasLeadSuit) {
+                allowedCards = hand.filter(c => c.suit === leadSuit);
+            } else if (hasTrump) {
+                // Masada koz var mı? (ilk koz atan kim?)
+                const playedTrumps = playedCards.filter(pc => pc.card.suit === trumpSuit).map(pc => pc.card);
+                let maxTrumpRankIdx = -1;
+                if (playedTrumps.length > 0) {
+                    maxTrumpRankIdx = Math.min(...playedTrumps.map(c => rankOrder.indexOf(c.rank)));
+                }
+                // Elinde daha yüksek koz var mı?
+                const higherTrumps = hand.filter(c => c.suit === trumpSuit && rankOrder.indexOf(c.rank) < maxTrumpRankIdx);
+                if (playedTrumps.length > 0 && higherTrumps.length > 0) {
+                    allowedCards = higherTrumps;
+                } else {
+                    allowedCards = hand.filter(c => c.suit === trumpSuit);
+                }
+            } else {
+                allowedCards = hand;
+            }
+        }
+        for (const suit of suitOrder) {
+            const rowDiv = document.createElement('div');
+            rowDiv.style.marginBottom = '2px';
+            const suitCards = sortPlayerCards(playersGlobal[i]).filter(card => card.suit === suit);
+            suitCards.forEach((card, idx) => {
+                const cardDiv = document.createElement('span');
+                cardDiv.className = 'card ' + suitClass[card.suit];
+                cardDiv.textContent = card.rank + card.suit;
+                if (activePlayer === null || i === activePlayer) {
+                    // Sadece izin verilen kartlara tıklanabilirlik ver
+                    let canPlay = true;
+                    if (i === activePlayer && leadSuit) {
+                        canPlay = allowedCards.some(c => c.suit === card.suit && c.rank === card.rank);
+                    }
+                    if (canPlay) {
+                        cardDiv.style.cursor = 'pointer';
+                        cardDiv.title = 'Bu kartı oyna';
+                        cardDiv.addEventListener('click', () => {
+                            playCard(i, card, suit, idx);
+                        });
+                    } else {
+                        cardDiv.style.opacity = 0.5;
+                        cardDiv.title = 'Bu kartı oynayamazsın';
+                    }
+                }
+                rowDiv.appendChild(cardDiv);
+            });
+            cardsDiv.appendChild(rowDiv);
+        }
+    }
+}
+
+let playersGlobal = null;
+// Oyun sonu puanlama için takımların topladığı kartlar
+let team1Tricks = [];
+let team2Tricks = [];
+let lastTrickWinnerTeam = null;
+
+function playCard(playerIdx, card, suit, idxInSuit) {
+    // Kartı oyuncunun elinden çıkar
+    const hand = playersGlobal[playerIdx];
+    for (let i = 0; i < hand.length; i++) {
+        if (hand[i].suit === card.suit && hand[i].rank === card.rank) {
+            hand.splice(i, 1);
+            break;
+        }
+    }
+    // Masaya ekle
+    playedCards.push({ player: playerIdx, card });
+    renderCenterCards();
+    // Sıradaki oyuncuya geç
+    if (playedCards.length < 4) {
+        currentPlayer = (currentPlayer + 1) % 4;
+        renderPlayersWithClick(currentPlayer);
+    } else {
+        // 4 kart atıldıysa, 1 saniye bekle, masayı temizle ve yeni eli başlat
+        setTimeout(() => {
+            const winner = findTrickWinner();
+            const trickCards = playedCards.map(pc => pc.card);
+            const winnerTeam = (winner % 2 === 0) ? 1 : 2; // 0 ve 2: Takım 1, 1 ve 3: Takım 2
+            // Son trick ise, lastTrickWinnerTeam'i set et ve kartları ekle
+            if (
+                playersGlobal[0].length === 0 &&
+                playersGlobal[1].length === 0 &&
+                playersGlobal[2].length === 0 &&
+                playersGlobal[3].length === 0
+            ) {
+                lastTrickWinnerTeam = winnerTeam;
+                if (winnerTeam === 1) team1Tricks.push(...trickCards);
+                else team2Tricks.push(...trickCards);
+                calculateEndGameScores();
+            } else {
+                if (winnerTeam === 1) team1Tricks.push(...trickCards);
+                else team2Tricks.push(...trickCards);
+            }
+            playedCards = [];
+            renderCenterCards();
+            firstPlayerOfTrick = winner;
+            currentPlayer = winner;
+            renderPlayersWithClick(currentPlayer);
+        }, 1000);
+    }
+}
+
+// Elin kazananını bul (ilk atılan kartın rengine bak, en büyük kartı atan kazanır, koz varsa koza bakılır)
+function findTrickWinner() {
+    if (playedCards.length !== 4) return null;
+    const leadSuit = playedCards[0].card.suit;
+    let bestIdx = 0;
+    let bestCard = playedCards[0].card;
+    for (let i = 1; i < 4; i++) {
+        const c = playedCards[i].card;
+        // Önce koz var mı bak
+        if (trumpSuit && c.suit === trumpSuit && bestCard.suit !== trumpSuit) {
+            bestIdx = i;
+            bestCard = c;
+        } else if (c.suit === bestCard.suit) {
+            // Aynı renktense büyüklüğe bak
+            if (rankOrder.indexOf(c.rank) < rankOrder.indexOf(bestCard.rank)) {
+                bestIdx = i;
+                bestCard = c;
+            }
+        }
+    }
+    return playedCards[bestIdx].player;
+}
+
+function renderCenterCards() {
+    const centerDiv = document.getElementById('center-cards');
+    centerDiv.innerHTML = '';
+    playedCards.forEach(play => {
+        const cardDiv = document.createElement('span');
+        cardDiv.className = 'card ' + suitClass[play.card.suit];
+        cardDiv.textContent = play.card.rank + play.card.suit;
+        cardDiv.title = `Oyuncu ${play.player + 1}`;
+        centerDiv.appendChild(cardDiv);
+    });
+}
+
+function calculateAndShowScores() {
+    const scores = [0, 0, 0, 0];
+    for (let i = 0; i < 4; i++) {
+        const hand = playersGlobal[i];
+        let sritKoz = false;
+        // 1. Kozda srit var mı?
+        if (trumpSuit &&
+            hand.filter(c => c.suit === trumpSuit && c.rank === 'A').length > 0 &&
+            hand.filter(c => c.suit === trumpSuit && c.rank === '10').length > 0 &&
+            hand.filter(c => c.suit === trumpSuit && c.rank === 'K').length > 0 &&
+            hand.filter(c => c.suit === trumpSuit && c.rank === 'Q').length > 0 &&
+            hand.filter(c => c.suit === trumpSuit && c.rank === 'J').length > 0) {
+            sritKoz = true;
+            scores[i] += 150;
+        }
+        // 2. Koz renginde toplam K ve Q sayısı
+        let kozKCount = hand.filter(c => c.suit === trumpSuit && c.rank === 'K').length;
+        let kozQCount = hand.filter(c => c.suit === trumpSuit && c.rank === 'Q').length;
+        // Srit için bir K ve bir Q kullanıldıysa, fazladan kalan çiftler için 40 puan ekle
+        let extraKozEvli = 0;
+        if (kozKCount > 0 && kozQCount > 0) {
+            let usedK = sritKoz ? 1 : 0;
+            let usedQ = sritKoz ? 1 : 0;
+            let kalanK = kozKCount - usedK;
+            let kalanQ = kozQCount - usedQ;
+            extraKozEvli = Math.min(kalanK, kalanQ);
+            scores[i] += extraKozEvli * 40;
+        }
+        // 3. Diğer renklerdeki her K+Q çifti için 20 puan
+        for (const suit of suitOrder) {
+            if (suit === trumpSuit) continue;
+            let kCount = hand.filter(c => c.suit === suit && c.rank === 'K').length;
+            let qCount = hand.filter(c => c.suit === suit && c.rank === 'Q').length;
+            let evliCount = Math.min(kCount, qCount);
+            scores[i] += evliCount * 20;
+        }
+        // 4. Farklı renklerden 4 J
+        if (suitOrder.every(suit => hand.some(c => c.suit === suit && c.rank === 'J'))) {
+            scores[i] += 40;
+        }
+        // 5. Farklı renklerden 4 Q
+        if (suitOrder.every(suit => hand.some(c => c.suit === suit && c.rank === 'Q'))) {
+            scores[i] += 60;
+        }
+        // 6. Farklı renklerden 4 K
+        if (suitOrder.every(suit => hand.some(c => c.suit === suit && c.rank === 'K'))) {
+            scores[i] += 80;
+        }
+        // 7. Farklı renklerden 4 As
+        if (suitOrder.every(suit => hand.some(c => c.suit === suit && c.rank === 'A'))) {
+            scores[i] += 100;
+        }
+        // 8. Q♠ + J♦
+        if (hand.some(c => c.suit === '♠' && c.rank === 'Q') && hand.some(c => c.suit === '♦' && c.rank === 'J')) {
+            scores[i] += 40;
+        }
+        // 9. (Koz dışında) Aynı renkten A+10+K+Q+J (srit)
+        for (const suit of suitOrder) {
+            if (suit === trumpSuit) continue;
+            if (
+                hand.some(c => c.suit === suit && c.rank === 'A') &&
+                hand.some(c => c.suit === suit && c.rank === '10') &&
+                hand.some(c => c.suit === suit && c.rank === 'K') &&
+                hand.some(c => c.suit === suit && c.rank === 'Q') &&
+                hand.some(c => c.suit === suit && c.rank === 'J')
+            ) {
+                scores[i] += 150;
+            }
+        }
+        // 10. Koz ile aynı renkteki 9'lar (her biri 10 puan)
+        if (trumpSuit) {
+            const nines = hand.filter(c => c.suit === trumpSuit && c.rank === '9').length;
+            scores[i] += nines * 10;
+        }
+    }
+    // Tabloyu oluştur
+    const tableDiv = document.getElementById('score-table');
+    let html = '<table style="width:100%;background:#fff;color:#222;border-radius:8px;text-align:center;font-size:18px;"><tr><th>Oyuncu</th><th>Puan</th></tr>';
+    for (let i = 0; i < 4; i++) {
+        html += `<tr><td>Oyuncu ${i+1}</td><td>${scores[i]}</td></tr>`;
+    }
+    // Takım puanlarını ekle
+    const team1 = scores[0] + scores[2];
+    const team2 = scores[1] + scores[3];
+    html += `<tr style='font-weight:bold;background:#eee;'><td>Takım 1 (1 & 3)</td><td>${team1}</td></tr>`;
+    html += `<tr style='font-weight:bold;background:#eee;'><td>Takım 2 (2 & 4)</td><td>${team2}</td></tr>`;
+    html += '</table>';
+    tableDiv.innerHTML = html;
+    tableDiv.style.display = '';
+}
+// Koz seçimi butonunda, koz seçildikten sonra puanları göster
+Array.from(document.getElementsByClassName('trump-btn')).forEach(btn => {
+    btn.addEventListener('click', function() {
+        if (auctionWinner === null) return;
+        trumpSuit = this.getAttribute('data-suit');
+        hideTrumpSelect();
+        document.getElementById('auction-status').textContent += ` | Koz: ${trumpSuit}`;
+        // Koz seçildikten sonra ilk kart atımı başlasın
+        enableFirstPlay();
+        calculateAndShowScores();
+    });
+});
+
+document.getElementById('bid-btn').addEventListener('click', () => {
+    if (!auctionActive) return;
+    const bid = parseInt(document.getElementById('bid-input').value, 10);
+    // İlk teklif mi?
+    const isFirstBid = auctionHighestBid === 150 && auctionBids.every(b => b === null);
+    if (
+        isNaN(bid) ||
+        bid < 150 ||
+        bid % 10 !== 0 ||
+        (!isFirstBid && (bid <= auctionHighestBid || bid < auctionHighestBid + 10))
+    ) {
+        alert('Teklif, mevcut en yüksekten en az 10 fazla, en az 150 ve 10\'un katı olmalı!');
+        return;
+    }
+    auctionBids[auctionCurrent] = bid;
+    auctionTurns++;
+    auctionHighestBid = bid;
+    updateAuctionHighestBid();
+    auctionCurrent = (auctionCurrent + 1) % 4;
+    nextAuctionTurn();
+});
+
+document.getElementById('pass-btn').addEventListener('click', () => {
+    if (!auctionActive) return;
+    auctionPasses[auctionCurrent] = true;
+    auctionTurns++;
+    auctionCurrent = (auctionCurrent + 1) % 4;
+    nextAuctionTurn();
+    // Pas geçildiğinde de en yüksek teklif güncel kalsın
+    updateAuctionHighestBid();
+});
+
+// Kartlar dağıtıldıktan sonra ihale başlat
+const oldDealBtnHandler = document.getElementById('dealBtn').onclick;
+document.getElementById('dealBtn').addEventListener('click', () => {
+    let deck = createDeck();
+    deck = shuffle(deck);
+    const players = dealCards(deck);
+    playersGlobal = players;
+    playedCards = [];
+    team1Tricks = [];
+    team2Tricks = [];
+    lastTrickWinnerTeam = null;
+    renderPlayers(players);
+    renderCenterCards();
+    startAuction();
+});
+
+// Oyun sonu puanlaması: Her As ve 10'lu 10 puan, K ve Q 5 puan, son eli alan takım 10 puan
+function calculateEndGameScores() {
+    function trickPoints(cards) {
+        let points = 0;
+        for (const c of cards) {
+            if (c.rank === 'A' || c.rank === '10') points += 10;
+            else if (c.rank === 'K' || c.rank === 'Q') points += 5;
+        }
+        return points;
+    }
+    let t1 = trickPoints(team1Tricks);
+    let t2 = trickPoints(team2Tricks);
+    // Bonus 10 puan sadece son eli kazanan takıma eklenmeli
+    if (lastTrickWinnerTeam === 1) t1 += 10;
+    else if (lastTrickWinnerTeam === 2) t2 += 10;
+    // Sonucu ekrana yaz
+    const resultDiv = document.getElementById('endgame-result');
+    // Takımların başlangıç puanlarını score-table'dan çek
+    const s1 = parseInt(document.querySelector('#score-table tr:nth-child(2) td:last-child').textContent, 10);
+    const s2 = parseInt(document.querySelector('#score-table tr:nth-child(3) td:last-child').textContent, 10);
+    const s3 = parseInt(document.querySelector('#score-table tr:nth-child(4) td:last-child').textContent, 10);
+    const s4 = parseInt(document.querySelector('#score-table tr:nth-child(5) td:last-child').textContent, 10);
+    let team1Start = s1 + s3;
+    let team2Start = s2 + s4;
+    let kabbut = false;
+    let oyunBatti = false;
+    let cezaPuan = 0;
+    // Kabbut kontrolü: ihaleyi kazanan takım tüm elleri aldıysa
+    let kazananTakim = null;
+    if (auctionWinner === 0 || auctionWinner === 2) kazananTakim = 1;
+    if (auctionWinner === 1 || auctionWinner === 3) kazananTakim = 2;
+    if (kazananTakim === 1 && t2 === 0) {
+        team2Start = 0;
+        kabbut = true;
+    } else if (kazananTakim === 2 && t1 === 0) {
+        team1Start = 0;
+        kabbut = true;
+    }
+    let team1Total = team1Start + t1;
+    let team2Total = team2Start + t2;
+    let teklif = auctionHighestBid;
+    // Oyun Battı kontrolü
+    if (kazananTakim && teklif) {
+        if ((kazananTakim === 1 && team1Total < teklif)) {
+            oyunBatti = true;
+            cezaPuan = teklif;
+            team1Start = 0;
+            team1Total = -cezaPuan;
+        } else if ((kazananTakim === 2 && team2Total < teklif)) {
+            oyunBatti = true;
+            cezaPuan = teklif;
+            team2Start = 0;
+            team2Total = -cezaPuan;
+        }
+    }
+    resultDiv.innerHTML = `Oyun Sonu Sonuçları:<br>
+    Takım 1 (1 & 3): <b>${t1}</b> puan<br>
+    Takım 2 (2 & 4): <b>${t2}</b> puan<br>
+    1. Takımın Toplam Puanı: <b>${team1Start} + ${t1} = ${team1Total}</b><br>
+    2. Takımın Toplam Puanı: <b>${team2Start} + ${t2} = ${team2Total}</b>`
+    + (kabbut ? `<br><span style='color:#ff4444;font-weight:bold;'>Kabbut! Rakip takımın puanı sıfırlandı.</span>` : '')
+    + (oyunBatti ? `<br><span style='color:#ff2222;font-weight:bold;'>Oyun Battı! Takımın puanı sıfırlandı ve -${cezaPuan} ceza puanı verildi.</span>` : '');
+
+    // Sonucu sağ alt köşeye yaz
+    const gameResultDiv = document.getElementById('game-result');
+    if (kazananTakim && teklif) {
+        if (oyunBatti) {
+            gameResultDiv.textContent = 'Oyun Battı!';
+        } else if (team1Total >= teklif && kazananTakim === 1) {
+            gameResultDiv.textContent = 'Oyunu kazandınız.';
+        } else if (team2Total >= teklif && kazananTakim === 2) {
+            gameResultDiv.textContent = 'Oyunu kazandınız.';
+        } else {
+            gameResultDiv.textContent = 'Oyunu kaybettiniz.';
+        }
+        gameResultDiv.style.display = '';
+    } else {
+        gameResultDiv.style.display = 'none';
+    }
+    // Sonuç tablosunu görünür yap
+    document.getElementById('score-table').style.display = '';
+}
+
+window.onload = function() {
+    // Pota iletişim kutusu işlevselliği
+    const potaChatMessages = document.getElementById('pota-chat-messages');
+    const potaChatInput = document.getElementById('pota-chat-input');
+    const potaChatSend = document.getElementById('pota-chat-send');
+    let potaChatLog = [];
+
+    function getCurrentPlayerNumber() {
+        if (auctionActive) return auctionCurrent + 1;
+        if (currentPlayer !== null) return currentPlayer + 1;
+        return '?';
+    }
+
+    function addPotaMessage(msg, playerNum) {
+        potaChatLog.push({msg, playerNum});
+        const lastMsgs = potaChatLog.slice(-10);
+        potaChatMessages.innerHTML = lastMsgs.map(m => `<div><b>Oyuncu ${m.playerNum}:</b> ${m.msg}</div>`).join('');
+        potaChatMessages.scrollTop = potaChatMessages.scrollHeight;
+    }
+
+    function speakText(text) {
+        if ('speechSynthesis' in window) {
+            const utter = new window.SpeechSynthesisUtterance(text);
+            utter.lang = 'tr-TR';
+            window.speechSynthesis.speak(utter);
+        }
+    }
+
+    potaChatSend.addEventListener('click', () => {
+        const text = potaChatInput.value.trim();
+        if (!text) return;
+        const playerNum = getCurrentPlayerNumber();
+        addPotaMessage(text, playerNum);
+        speakText(`Oyuncu ${playerNum}: ${text}`);
+        potaChatInput.value = '';
+        potaChatInput.focus();
+        // Sıra bir sonraki oyuncuya geçsin ve ihale turu ilerlesin
+        if (auctionActive) {
+            auctionTurns++;
+            auctionCurrent = (auctionCurrent + 1) % 4;
+            nextAuctionTurn();
+        } else if (currentPlayer !== null) {
+            currentPlayer = (currentPlayer + 1) % 4;
+            renderPlayersWithClick(currentPlayer);
+        }
+    });
+
+    potaChatInput.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') {
+            potaChatSend.click();
+        }
+    });
+}; 
