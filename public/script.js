@@ -1,4 +1,3 @@
-
 const suits = ['♥', '♠', '♦', '♣'];
 const ranks = ['9', '10', 'J', 'Q', 'K', 'A'];
 
@@ -88,6 +87,11 @@ let auctionWinner = null;
 let auctionTurns = 0;
 let trumpSuit = null;
 
+// Samandağ Pinaki özel değişkenleri
+let sordumKonusMode = false; // Sordum/Konuş modunda mı?
+let sordumPlayer = null; // Sordum diyen oyuncu
+let konusPlayer = null; // Konuş diyen oyuncu
+
 function updateAuctionHighestBid() {
     const div = document.getElementById('auction-highest-bid');
     if (auctionHighestBid && auctionHighestBid >= 150) {
@@ -105,6 +109,10 @@ function startAuction() {
     auctionHighestBid = 150; // İhale en az 150'den başlar
     auctionWinner = null;
     auctionTurns = 0;
+    // Samandağ Pinaki değişkenlerini sıfırla
+    sordumKonusMode = false;
+    sordumPlayer = null;
+    konusPlayer = null;
     document.getElementById('auction-status').textContent = 'İhale başladı! (En az 150)';
     document.getElementById('auction-controls').style.display = '';
     updateAuctionHighestBid();
@@ -112,11 +120,13 @@ function startAuction() {
 }
 
 function nextAuctionTurn() {
-    if (auctionTurns >= 4) {
+    // Sordum/Konuş modunda değilse normal ihale bitiş kontrolü yap
+    if (!sordumKonusMode && auctionTurns >= 4) {
         // İhale bittiğinde tüm kutulardan kaldır
         for (let i = 0; i < 4; i++) {
             document.getElementById(`player${i+1}`).classList.remove('auction-active');
         }
+
         endAuction();
         return;
     }
@@ -129,6 +139,44 @@ function nextAuctionTurn() {
         const div = document.getElementById(`player${i+1}`);
         if (i === auctionCurrent) div.classList.add('auction-active');
         else div.classList.remove('auction-active');
+    }
+    
+    // Samandağ Pinaki kuralı: Buton görünürlüğünü yönet
+    const sordumBtn = document.getElementById('sordum-btn');
+    const konusBtn = document.getElementById('konus-btn');
+    const bozBtn = document.getElementById('boz-btn');
+    const bidBtn = document.getElementById('bid-btn');
+    const passBtn = document.getElementById('pass-btn');
+    
+    // Tüm butonları gizle
+    sordumBtn.style.display = 'none';
+    konusBtn.style.display = 'none';
+    bozBtn.style.display = 'none';
+    bidBtn.style.display = 'inline-block';
+    passBtn.style.display = 'inline-block';
+    
+    if (sordumKonusMode) {
+        // Sordum/Konuş modunda
+        if (auctionCurrent === 3 && sordumPlayer === 2 && auctionBids[2] === null) {
+            // 4. oyuncu sırasında ve 3. oyuncu sordum demiş, 3. oyuncu henüz teklif vermemiş
+            bozBtn.style.display = 'inline-block';
+            konusBtn.style.display = 'inline-block';
+            bidBtn.style.display = 'none';
+            passBtn.style.display = 'none';
+        } else if (auctionCurrent === 3 && sordumPlayer === 2 && auctionBids[2] !== null) {
+            // 4. oyuncu sırasında ve 3. oyuncu teklif vermiş, 4. oyuncu teklif verebilir veya pas diyebilir
+            bidBtn.style.display = 'inline-block';
+            passBtn.style.display = 'inline-block';
+        } else if (auctionCurrent === 2 && konusPlayer === 3) {
+            // 3. oyuncu sırasında ve 4. oyuncu konuş demiş
+            bidBtn.style.display = 'inline-block';
+            passBtn.style.display = 'inline-block';
+        }
+    } else if (auctionCurrent === 2 && auctionBids[0] === null && auctionBids[1] === null) {
+        // Normal 3. oyuncu sırasında ve 1. ve 2. oyuncu teklif vermemiş
+        sordumBtn.style.display = 'inline-block';
+        bidBtn.style.display = 'inline-block';
+        passBtn.style.display = 'inline-block';
     }
 }
 
@@ -149,6 +197,8 @@ function endAuction() {
     auctionWinner = winner;
     if (auctionWinner !== null) {
         document.getElementById('auction-status').textContent = `İhaleyi Oyuncu ${auctionWinner + 1} kazandı! Teklif: ${auctionHighestBid}`;
+        // İhale sonucunu sesli okuma
+        speakText(`İhaleyi Oyuncu ${auctionWinner + 1} kazandı. Teklif: ${auctionHighestBid}`);
         //calculateAndShowScores(); // Başlangıç puanlarını gösterme
         showTrumpSelect();
         // Burada koz seçimi ve ilk kart atımı başlatılabilir
@@ -443,6 +493,16 @@ Array.from(document.getElementsByClassName('trump-btn')).forEach(btn => {
     btn.addEventListener('click', function() {
         if (auctionWinner === null) return;
         trumpSuit = this.getAttribute('data-suit');
+        // Kozun Türkçe adını belirle
+        let kozAd = '';
+        switch(trumpSuit) {
+            case '♥': kozAd = 'Kupa'; break;
+            case '♠': kozAd = 'Maça'; break;
+            case '♦': kozAd = 'Karo'; break;
+            case '♣': kozAd = 'Sinek'; break;
+            default: kozAd = trumpSuit;
+        }
+        speakText(`Seçilen koz: ${kozAd}`);
         hideTrumpSelect();
         document.getElementById('auction-status').textContent += ` | Koz: ${trumpSuit}`;
         // Koz seçildikten sonra ilk kart atımı başlasın
@@ -469,23 +529,134 @@ document.getElementById('bid-btn').addEventListener('click', () => {
     auctionTurns++;
     auctionHighestBid = bid;
     updateAuctionHighestBid();
+    speakText(`Oyuncu ${auctionCurrent + 1} teklif verdi: ${bid}`);
+
+    // Sordum/Konuş sonrası 3. oyuncu teklif verirse sadece sırayı 4. oyuncuya geçir
+    if (sordumKonusMode && konusPlayer === 3 && auctionCurrent === 2) {
+        auctionCurrent = 3;
+        nextAuctionTurn();
+        return;
+    }
+    // Sordum/Konuş sonrası 4. oyuncu teklif verirse ihale hemen 4. oyuncuda kalır ve biter
+    if (sordumKonusMode && konusPlayer === 3 && auctionCurrent === 3) {
+        sordumKonusMode = false;
+        konusPlayer = null;
+        sordumPlayer = null;
+        auctionWinner = 3;
+        speakText(`İhale Oyuncu 4'e kaldı. Teklif: ${auctionHighestBid}`);
+        endAuction();
+        return;
+    }
     auctionCurrent = (auctionCurrent + 1) % 4;
     nextAuctionTurn();
 });
 
 document.getElementById('pass-btn').addEventListener('click', () => {
     if (!auctionActive) return;
+    speakText(`Oyuncu ${auctionCurrent + 1} pas`);
     auctionPasses[auctionCurrent] = true;
     auctionTurns++;
+
+    // Sordum/Konuş sonrası 3. oyuncu konuş sonrası pas derse, ihale 4. oyuncuya 150'ye kalır
+    if (auctionCurrent === 2 && sordumKonusMode && konusPlayer === 3) {
+        auctionBids[3] = 150;
+        auctionHighestBid = 150;
+        auctionWinner = 3;
+        speakText(`İhale Oyuncu 4'e 150'ye kaldı`);
+        sordumKonusMode = false;
+        endAuction();
+        return;
+    }
+    // Sordum/Konuş sonrası 4. oyuncu pas derse ihale 3. oyuncuya kalır ve biter
+    if (auctionCurrent === 3 && sordumKonusMode && konusPlayer === 3 && auctionBids[2] !== null) {
+        auctionWinner = 2;
+        auctionHighestBid = auctionBids[2];
+        speakText(`İhale Oyuncu 3'e kaldı. Teklif: ${auctionHighestBid}`);
+        sordumKonusMode = false;
+        konusPlayer = null;
+        sordumPlayer = null;
+        endAuction();
+        return;
+    }
     auctionCurrent = (auctionCurrent + 1) % 4;
     nextAuctionTurn();
-    // Pas geçildiğinde de en yüksek teklif güncel kalsın
     updateAuctionHighestBid();
+});
+
+// Samandağ Pinaki - Sordum butonu
+document.getElementById('sordum-btn').addEventListener('click', () => {
+    if (!auctionActive || auctionCurrent !== 2) return;
+    // Sordum dendiğinde sesli okuma
+    speakText(`Oyuncu ${auctionCurrent + 1} sordum dedi`);
+    sordumKonusMode = true;
+    sordumPlayer = auctionCurrent;
+    auctionTurns++;
+    auctionCurrent = (auctionCurrent + 1) % 4; // Sıra 4. oyuncuya geçer
+    nextAuctionTurn();
+});
+
+// Samandağ Pinaki - Konuş butonu (3. oyuncu için)
+document.getElementById('konus-btn').addEventListener('click', () => {
+    if (!auctionActive) return;
+    
+    if (auctionCurrent === 2 && !sordumKonusMode) {
+        // 3. oyuncu direkt konuş diyor
+        speakText(`Oyuncu ${auctionCurrent + 1} konuş dedi`);
+        auctionTurns++;
+        auctionCurrent = (auctionCurrent + 1) % 4;
+        nextAuctionTurn();
+    } else if (auctionCurrent === 3 && sordumKonusMode) {
+        // 4. oyuncu 3. oyuncuya konuş diyor
+        speakText(`Oyuncu ${auctionCurrent + 1} konuş dedi`);
+        konusPlayer = auctionCurrent;
+        auctionCurrent = 2; // Sıra 3. oyuncuya geri döner
+        nextAuctionTurn();
+    }
+});
+
+// Samandağ Pinaki - Boz butonu
+document.getElementById('boz-btn').addEventListener('click', () => {
+    if (!auctionActive || auctionCurrent !== 3 || !sordumKonusMode) return;
+    // Boz dendiğinde sesli okuma
+    speakText(`Oyuncu ${auctionCurrent + 1} boz dedi`);
+    // Kartları yeniden dağıt
+    let deck = createDeck();
+    deck = shuffle(deck);
+    const players = dealCards(deck);
+    playersGlobal = players;
+    renderPlayers(players);
+    // İhaleyi sıfırla ve yeniden başlat
+    startAuction();
 });
 
 // Kartlar dağıtıldıktan sonra ihale başlat
 const oldDealBtnHandler = document.getElementById('dealBtn').onclick;
 document.getElementById('dealBtn').addEventListener('click', () => {
+    // --- EK: Skor ve pota kutusu sıfırlama ---
+    // Skor tablosunu sıfırla (oyuncu ve takım puanlarını 0 yap)
+    const tableDiv = document.getElementById('score-table');
+    if (tableDiv) {
+        let html = '<table style="width:100%;background:#fff;color:#222;border-radius:8px;text-align:center;font-size:18px;"><tr><th>Oyuncu</th><th>Puan</th></tr>';
+        for (let i = 0; i < 4; i++) {
+            html += `<tr><td>Oyuncu ${i+1}</td><td>0</td></tr>`;
+        }
+        html += `<tr style='font-weight:bold;background:#eee;'><td>Takım 1 (1 & 3)</td><td>0</td></tr>`;
+        html += `<tr style='font-weight:bold;background:#eee;'><td>Takım 2 (2 & 4)</td><td>0</td></tr>`;
+        html += '</table>';
+        tableDiv.innerHTML = html;
+        tableDiv.style.display = '';
+    }
+    // Oyun sonu sonucu sıfırla
+    const resultDiv = document.getElementById('endgame-result');
+    if (resultDiv) resultDiv.innerHTML = '';
+    // Sağ alt köşedeki game-result kutusunu gizle
+    const gameResultDiv = document.getElementById('game-result');
+    if (gameResultDiv) gameResultDiv.style.display = 'none';
+    // Pota kutusunu temizle
+    const potaChatMessages = document.getElementById('pota-chat-messages');
+    if (potaChatMessages) potaChatMessages.innerHTML = '';
+    if (window.potaChatLog) window.potaChatLog = [];
+    // --- mevcut kart dağıt kodu ---
     let deck = createDeck();
     deck = shuffle(deck);
     const players = dealCards(deck);
@@ -580,6 +751,33 @@ function calculateEndGameScores() {
     }
     // Sonuç tablosunu görünür yap
     document.getElementById('score-table').style.display = '';
+
+    // --- EK: Pota kutusunu ve skor tablosunu sıfırla ---
+    // Pota kutusunu temizle
+    const potaChatMessages = document.getElementById('pota-chat-messages');
+    if (potaChatMessages) potaChatMessages.innerHTML = '';
+    if (window.potaChatLog) window.potaChatLog = [];
+    // Skor tablosunu sıfırla (oyuncu ve takım puanlarını 0 yap)
+    const tableDiv = document.getElementById('score-table');
+    if (tableDiv) {
+        let html = '<table style="width:100%;background:#fff;color:#222;border-radius:8px;text-align:center;font-size:18px;"><tr><th>Oyuncu</th><th>Puan</th></tr>';
+        for (let i = 0; i < 4; i++) {
+            html += `<tr><td>Oyuncu ${i+1}</td><td>0</td></tr>`;
+        }
+        html += `<tr style='font-weight:bold;background:#eee;'><td>Takım 1 (1 & 3)</td><td>0</td></tr>`;
+        html += `<tr style='font-weight:bold;background:#eee;'><td>Takım 2 (2 & 4)</td><td>0</td></tr>`;
+        html += '</table>';
+        tableDiv.innerHTML = html;
+    }
+}
+
+// Global speakText fonksiyonu
+function speakText(text) {
+    if ('speechSynthesis' in window) {
+        const utter = new window.SpeechSynthesisUtterance(text);
+        utter.lang = 'tr-TR';
+        window.speechSynthesis.speak(utter);
+    }
 }
 
 window.onload = function() {
@@ -587,27 +785,19 @@ window.onload = function() {
     const potaChatMessages = document.getElementById('pota-chat-messages');
     const potaChatInput = document.getElementById('pota-chat-input');
     const potaChatSend = document.getElementById('pota-chat-send');
-    let potaChatLog = [];
+    window.potaChatLog = [];
 
     function getCurrentPlayerNumber() {
-        if (auctionActive) return auctionCurrent + 1;
-        if (currentPlayer !== null) return currentPlayer + 1;
+        if (typeof auctionActive !== 'undefined' && auctionActive) return auctionCurrent + 1;
+        if (typeof currentPlayer !== 'undefined' && currentPlayer !== null) return currentPlayer + 1;
         return '?';
     }
 
     function addPotaMessage(msg, playerNum) {
-        potaChatLog.push({msg, playerNum});
-        const lastMsgs = potaChatLog.slice(-10);
+        window.potaChatLog.push({msg, playerNum});
+        const lastMsgs = window.potaChatLog.slice(-10);
         potaChatMessages.innerHTML = lastMsgs.map(m => `<div><b>Oyuncu ${m.playerNum}:</b> ${m.msg}</div>`).join('');
         potaChatMessages.scrollTop = potaChatMessages.scrollHeight;
-    }
-
-    function speakText(text) {
-        if ('speechSynthesis' in window) {
-            const utter = new window.SpeechSynthesisUtterance(text);
-            utter.lang = 'tr-TR';
-            window.speechSynthesis.speak(utter);
-        }
     }
 
     potaChatSend.addEventListener('click', () => {
@@ -619,19 +809,22 @@ window.onload = function() {
         potaChatInput.value = '';
         potaChatInput.focus();
         // Sıra bir sonraki oyuncuya geçsin ve ihale turu ilerlesin
-        if (auctionActive) {
+        if (typeof auctionActive !== 'undefined' && auctionActive) {
             auctionTurns++;
             auctionCurrent = (auctionCurrent + 1) % 4;
             nextAuctionTurn();
-        } else if (currentPlayer !== null) {
+        } else if (typeof currentPlayer !== 'undefined' && currentPlayer !== null) {
             currentPlayer = (currentPlayer + 1) % 4;
             renderPlayersWithClick(currentPlayer);
         }
     });
 
-    potaChatInput.addEventListener('keydown', (e) => {
+    // Enter tuşu ile de mesaj gönder
+    potaChatInput.addEventListener('keydown', function(e) {
         if (e.key === 'Enter') {
             potaChatSend.click();
         }
     });
-}; 
+
+
+};
